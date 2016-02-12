@@ -22,6 +22,13 @@ function apiUrl(path, gist=false) {
   }
 }
 
+function prNumberFromRef(refName) {
+  let m = refName.match(/refs\/pull\/(\d+)\/head/i);
+  if (!m) return null;
+  
+  return m[1];
+}
+
 export function getNwoFromRepoUrl(repoUrl) {
   // Fix up SSH repo origins
   if (repoUrl.match(/^git@.*:.*\.git$/i)) {
@@ -108,9 +115,19 @@ export async function fetchAllRefsWithInfo(nwo) {
     async (x) => {
       return (await cachedGitHub(x)).result;
     });
+    
+  let prInfo = await asyncMap(
+    _.map(refs, (ref) => ref.ref),
+    async (ref) => {
+      let num = prNumberFromRef(ref);
+      if (!num) return null;
+
+      return (await cachedGitHub(apiUrl(`repos/${nwo}/pulls/${num}`), null, 60*1000)).result;
+    });
 
   _.each(refs, (ref) => {
     ref.object.commit = commitInfo[ref.object.url];
+    ref.object.pr_info = prInfo[ref.ref];
   });
 
   return refs;
