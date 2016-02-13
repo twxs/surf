@@ -14,7 +14,7 @@ function apiUrl(path, gist=false) {
   let apiRoot = gist ?
     (process.env.GIST_ENTERPRISE_URL || process.env.GITHUB_ENTERPRISE_URL) :
     process.env.GITHUB_ENTERPRISE_URL;
-    
+
   if (apiRoot) {
     return `${apiRoot}/api/v3/${path}`;
   } else {
@@ -25,13 +25,13 @@ function apiUrl(path, gist=false) {
 function prNumberFromRef(refName) {
   let m = refName.match(/refs\/pull\/(\d+)\/head/i);
   if (!m) return null;
-  
+
   return m[1];
 }
 
 export function determineInterestingRefs(refInfo) {
   let nonBoringRefs = filterBoringRefs(refInfo);
-  
+
   // First determine the PR and SHA info as a lookup
   let shaToRefs = _.reduce(nonBoringRefs, (acc, ref) => {
     acc[ref.object.sha] = acc[ref.object.sha] || [];
@@ -39,7 +39,7 @@ export function determineInterestingRefs(refInfo) {
 
     return acc;
   }, {});
-  
+
   let ret = _.reduce(nonBoringRefs, (acc, ref) => {
     let allRefsForSha = shaToRefs[ref.object.sha];
     if (allRefsForSha.length === 1) {
@@ -47,34 +47,34 @@ export function determineInterestingRefs(refInfo) {
       acc.push({ref: ref.ref, pr: prNumberFromRef(ref.ref) });
       return acc;
     }
-      
+
     d(`Duplicated ref ${ref.ref}: ${JSON.stringify(allRefsForSha)}`);
-    
+
     // If we've got a PR and a branch that also is that PR, we don't
     // care about the PR ref
     if (ref.ref.match(/refs\/pull/)) return acc;
-    
+
     let prNum = _.find(allRefsForSha, (x) => prNumberFromRef(x));
     acc.push({ref: ref.ref, pr: prNumberFromRef(prNum) });
     return acc;
   }, []);
-  
+
   d(JSON.stringify(ret));
-  
+
   // Convert all the PR numbers to the pr_info data
   _.each(ret, (x) => {
     if (!x.pr) return;
-    
+
     let needle = `refs/pull/${x.pr}/head`;
     let ref = _.find(refInfo, (x) => x.ref === needle);
     if (!ref) {
       d(`Couldn't find PR info but we should be able to: ${needle}`);
       return;
     }
-    
+
     x.pr = ref.object.pr_info;
   });
-  
+
   return ret;
 }
 
@@ -156,27 +156,33 @@ export function fetchAllRefs(nwo) {
   return githubPaginate(apiUrl(`repos/${nwo}/git/refs?per_page=100`), null, 60*1000);
 }
 
-export async function fetchAllRefsWithInfo(nwo) {
+export async function fetchAllRefsWithInfo(nwo, skipCommitInfo=false, skipPrInfo=false) {
   let refs = filterBoringRefs(await fetchAllRefs(nwo));
 
-  let commitInfo = await asyncMap(
-    _.map(refs, (ref) => ref.object.url),
-    async (x) => {
-      return (await cachedGitHub(x)).result;
-    });
-    
-  let prInfo = await asyncMap(
-    _.map(refs, (ref) => ref.ref),
-    async (ref) => {
-      let num = prNumberFromRef(ref);
-      if (!num) return null;
+  let commitInfo = null;
+  if (!skipCommitInfo) {
+    commitInfo = await asyncMap(
+      _.map(refs, (ref) => ref.object.url),
+      async (x) => {
+        return (await cachedGitHub(x)).result;
+      });
+  }
 
-      return (await cachedGitHub(apiUrl(`repos/${nwo}/pulls/${num}`), null, 60*1000)).result;
-    });
+  let prInfo = null;
+  if (!skipPrInfo) {
+    prInfo = await asyncMap(
+      _.map(refs, (ref) => ref.ref),
+      async (ref) => {
+        let num = prNumberFromRef(ref);
+        if (!num) return null;
+
+        return (await cachedGitHub(apiUrl(`repos/${nwo}/pulls/${num}`), null, 60*1000)).result;
+      });
+  }
 
   _.each(refs, (ref) => {
-    ref.object.commit = commitInfo[ref.object.url];
-    ref.object.pr_info = prInfo[ref.ref];
+    if (commitInfo) ref.object.commit = commitInfo[ref.object.url];
+    if (prInfo) ref.object.pr_info = prInfo[ref.ref];
   });
 
   return refs;
