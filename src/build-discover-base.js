@@ -1,3 +1,5 @@
+/*eslint no-unused-vars:0 */
+
 export default class BuildDiscoverBase {
   constructor(rootDir) {
     this.rootDir = rootDir;
