@@ -10,6 +10,9 @@ import createLRU from 'lru-cache';
 
 const d = require('debug')('surf:github-api');
 
+const sshRemoteUrl = /^git@(.*):([^.]*)(\.git)?$/i;
+const httpsRemoteUri = /https?:\/\//i;
+
 function apiUrl(path, gist=false) {
   let apiRoot = gist ?
     (process.env.GIST_ENTERPRISE_URL || process.env.GITHUB_ENTERPRISE_URL) :
@@ -27,6 +30,57 @@ function prNumberFromRef(refName) {
   if (!m) return null;
 
   return m[1];
+}
+
+export function getSanitizedRepoUrl(repoUrl) {
+  if (repoUrl.match(httpsRemoteUri)) return repoUrl;
+  let m = repoUrl.match(sshRemoteUrl);
+  
+  if (!m) {
+    d(`URL ${repoUrl} seems totally bogus`);
+    return repoUrl;
+  }
+  
+  if (m[1] === 'github.com') {
+    return `https://github.com/${m[2]}`;
+  } else {
+    let host = process.env.GITHUB_ENTERPRISE_URL || `https://${m[1]}`;
+    return `${host}/${m[2]}`;
+  }
+}
+
+export function getNwoFromRepoUrl(repoUrl) {
+  // Fix up SSH repo origins
+  let m = repoUrl.match(sshRemoteUrl);
+  if (m) { return m[2]; }
+
+  let u = url.parse(repoUrl);
+  return u.path.slice(1).replace(/\.git$/, '');
+}
+
+export async function gitHub(uri, token=null, body=null) {
+  let tok = token || process.env.GITHUB_TOKEN;
+
+  d(`Fetching GitHub URL: ${uri}`);
+  let opts = {
+    uri: uri,
+    headers: {
+      'User-Agent': `${pkg.name}/${pkg.version}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'Authorization': `token ${tok}`
+    },
+    json: true
+  };
+
+  if (body) {
+    opts.body = body;
+    opts.method = 'POST';
+  }
+
+  let ret = request(opts);
+
+  let result = await ret;
+  return { result, headers: ret.response.headers };
 }
 
 export function determineInterestingRefs(refInfo) {
@@ -76,41 +130,6 @@ export function determineInterestingRefs(refInfo) {
   });
 
   return ret;
-}
-
-export function getNwoFromRepoUrl(repoUrl) {
-  // Fix up SSH repo origins
-  if (repoUrl.match(/^git@.*:.*\.git$/i)) {
-    return repoUrl.split(':')[1].replace(/\.git$/, '');
-  }
-
-  let u = url.parse(repoUrl);
-  return u.path.slice(1).replace(/\.git$/, '');
-}
-
-export async function gitHub(uri, token=null, body=null) {
-  let tok = token || process.env.GITHUB_TOKEN;
-
-  d(`Fetching GitHub URL: ${uri}`);
-  let opts = {
-    uri: uri,
-    headers: {
-      'User-Agent': `${pkg.name}/${pkg.version}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'Authorization': `token ${tok}`
-    },
-    json: true
-  };
-
-  if (body) {
-    opts.body = body;
-    opts.method = 'POST';
-  }
-
-  let ret = request(opts);
-
-  let result = await ret;
-  return { result, headers: ret.response.headers };
 }
 
 const githubCache = createLRU({
